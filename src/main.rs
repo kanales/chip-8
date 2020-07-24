@@ -1,8 +1,7 @@
 mod lib;
 
 use lib::machine::Machine;
-use lib::n_bit;
-use lib::screen::{Screen, HEIGHT, WIDTH};
+use lib::screen::{HEIGHT, WIDTH};
 use std::env;
 use std::fs::File;
 use std::io::Read;
