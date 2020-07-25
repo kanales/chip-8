@@ -70,7 +70,6 @@ impl Machine {
 
     pub fn key_pressed(&mut self, ks: &Vec<u8>) {
         self.pressed_keys.clone_from(ks);
-        println!("pk: {:?}", self.pressed_keys);
     }
 
     pub fn step(&mut self) -> Result<Option<&[u8]>, Chip8Error> {
@@ -84,9 +83,13 @@ impl Machine {
 
         self.pc += 2;
         self.timer = if self.timer > 0 { self.timer - 1 } else { 0 };
-        self.sound_timer = if self.timer > 0 { self.timer - 1 } else { 0 };
+        self.sound_timer = if self.timer > 0 {
+            self.sound_timer - 1
+        } else {
+            0
+        };
         if self.sound_timer > 0 {
-            //println!("BEEP");
+            println!("BEEP");
         }
         self.execute(code)
     }

@@ -9,3 +9,6 @@ edition = "2018"
 [dependencies]
 rand = "*"
 sdl2 = "*"
+
+[profile.release]
+opt-level = 3

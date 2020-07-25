@@ -128,7 +128,6 @@ pub fn main() {
                 _ => {}
             }
         }
-        println!("input: {:?}", presses);
         machine.key_pressed(&presses);
         match machine.step() {
             Ok(Some(b)) => {
