@@ -1,9 +1,6 @@
-use crate::lib::opcode::Opcode;
 use crate::lib::screen::Buffer;
 use crate::lib::screen::Screen;
 use crate::lib::Chip8Error;
-
-use std::convert::TryInto;
 
 const FS_CHARLEN: u8 = 5;
 const FONTSET: [u8; 80] = [
@@ -48,7 +45,7 @@ fn test_to_bcd() {
 }
 
 impl Machine {
-    pub fn new(program: &Vec<u8>) -> Self {
+    pub fn new(program: &[u8]) -> Self {
         let mut m = Machine {
             memory: [0; 0x1000],
             buffer: Buffer::new(),
@@ -68,8 +65,8 @@ impl Machine {
         m
     }
 
-    pub fn key_pressed(&mut self, ks: &Vec<u8>) {
-        self.pressed_keys.clone_from(ks);
+    pub fn key_pressed(&mut self, ks: &[u8]) {
+        self.pressed_keys.clone_from_slice(ks);
     }
 
     pub fn step(&mut self) -> Result<Option<&[u8]>, Chip8Error> {
@@ -77,9 +74,8 @@ impl Machine {
             return Err(Chip8Error::EndOfMemory);
         };
 
-        let code0 = self.memory[self.pc] as u16;
-        let code1 = self.memory[self.pc + 1] as u16;
-        let code: Opcode = ((code0 << 8) + code1).try_into()?;
+        let code0 = self.memory[self.pc];
+        let code1 = self.memory[self.pc + 1];
 
         self.pc += 2;
         self.timer = if self.timer > 0 { self.timer - 1 } else { 0 };
@@ -91,7 +87,7 @@ impl Machine {
         if self.sound_timer > 0 {
             println!("BEEP");
         }
-        self.execute(code)
+        self.execute(code0, code1)
     }
 
     fn v_mut(&mut self, x: u8) -> &mut u8 {
@@ -102,16 +98,119 @@ impl Machine {
         self.registers[x as usize]
     }
 
-    /// Execute a single instruction
-    fn execute(&mut self, instruction: Opcode) -> Result<Option<&[u8]>, Chip8Error> {
-        use Opcode::*;
-        match instruction {
-            Sys(_) => { /* do nothing */ }
-            Cls => {
+    fn execute(&mut self, most: u8, least: u8) -> Result<Option<&[u8]>, Chip8Error> {
+        let a = (most & 0xF0) >> 4;
+        let x = most & 0x0F;
+
+        let y = (least & 0xF0) >> 4;
+        let n = least & 0x0F;
+
+        let code = ((most as u16) << 8) + (least as u16);
+        let nnn = code & 0x0FFF;
+        let nn = (y << 4) + n;
+
+        match (a, x, y, n) {
+            // clear screen
+            (0x0, 0x0, 0xE, 0x0) => {
                 self.buffer.clear();
                 return Ok(Some(self.buffer.get_buffer()));
             }
-            Draw(x, y, n) => {
+            // return
+            (0x0, 0x0, 0xE, 0xE) => {
+                self.pc = self.stack.pop().ok_or(Chip8Error::EmptyStack)?;
+            }
+            // sys call
+            (0x0, _, _, _) => { /* do nothing */ }
+
+            (0x1, _, _, _) => {
+                self.pc = nnn as usize;
+            }
+            (0x2, _, _, _) => {
+                self.stack.push(self.pc);
+                self.pc = nnn as usize;
+            }
+            (0x3, _, _, _) => {
+                if self.v(x) == nn {
+                    // skip instruction
+                    self.pc += 2;
+                }
+            }
+            (0x4, _, _, _) => {
+                if self.v(x) != nn {
+                    // skip instruction
+                    self.pc += 2;
+                }
+            }
+            (0x5, _, _, 0x0) => {
+                if self.v(x) == self.v(y) {
+                    // skip instruction
+                    self.pc += 2;
+                }
+            }
+            (0x6, _, _, _) => {
+                *self.v_mut(x) = nn;
+            }
+            (0x7, _, _, _) => {
+                let res = self.v(x) as u16 + nn as u16;
+                *self.v_mut(0xF) = if res & 0xFF00 == 0 { 0 } else { 1 };
+                *self.v_mut(x) = (res & 0xFF) as u8;
+            }
+
+            (0x8, _, _, 0x0) => {
+                *self.v_mut(x) = self.v(y);
+            }
+            (0x8, _, _, 0x1) => {
+                *self.v_mut(x) |= self.v(y);
+            }
+            (0x8, _, _, 0x2) => {
+                *self.v_mut(x) &= self.v(y);
+            }
+            (0x8, _, _, 0x3) => {
+                *self.v_mut(x) ^= self.v(y);
+            }
+            (0x8, _, _, 0x4) => {
+                let res = self.v(x) as u16 + self.v(y) as u16;
+                *self.v_mut(0xF) = if res & 0xFF00 != 0 { 1 } else { 0 };
+                *self.v_mut(x) = (res & 0xFF) as u8;
+            }
+            (0x8, _, _, 0x5) => {
+                let res = 0xFF00 + self.v(x) as u16 - self.v(y) as u16;
+                *self.v_mut(0xF) = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
+                *self.v_mut(x) = (res & 0xFF) as u8;
+            }
+            (0x8, _, _, 0x6) => {
+                *self.v_mut(0xF) = self.v(x) & 1;
+                *self.v_mut(x) >>= 1;
+            }
+            (0x8, _, _, 0x7) => {
+                let res = 0xFF00 + self.v(y) as u16 - self.v(x) as u16;
+                *self.v_mut(0xF) = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
+                *self.v_mut(x) = (res & 0xFF) as u8;
+            }
+            (0x8, _, _, 0xE) => {
+                *self.v_mut(0xF) = (self.v(x) & 0x80) >> 7;
+                *self.v_mut(x) = (self.v(x) & 0x7F << 1) as u8;
+            }
+
+            (0x9, _, _, 0) => {
+                if self.v(x) != self.v(y) {
+                    // skip instruction
+                    self.pc += 2;
+                }
+            }
+
+            (0xA, _, _, _) => {
+                self.i = nnn as usize;
+            }
+            (0xB, _, _, _) => {
+                self.pc = (nnn + self.v(0) as u16) as usize;
+            }
+            (0xC, _, _, _) => {
+                // TODO use random gen
+                *self.v_mut(x) = rand::random::<u8>() & nn;
+            }
+            // Draw sprite
+            (0xD, _, _, _) => {
                 *self.v_mut(0xF) = if self.buffer.draw(
                     self.v(x),
                     self.v(y),
@@ -124,143 +223,58 @@ impl Machine {
                 };
                 return Ok(Some(self.buffer.get_buffer()));
             }
-            Ret => {
-                self.pc = self.stack.pop().ok_or(Chip8Error::EmptyStack)?;
-            }
-            Goto(a) => {
-                self.pc = a as usize;
-            }
-            Jump(a) => {
-                self.pc = (a + self.v(0) as u16) as usize;
-            }
-            Call(a) => {
-                self.stack.push(self.pc);
-                self.pc = a as usize;
-            }
-            SeC(x, k) => {
-                if self.v(x) == k {
-                    // skip instruction
-                    self.pc += 2;
-                }
-            }
-            SneC(x, k) => {
-                if self.v(x) != k {
-                    // skip instruction
-                    self.pc += 2;
-                }
-            }
-            Se(x, y) => {
-                if self.v(x) == self.v(y) {
-                    // skip instruction
-                    self.pc += 2;
-                }
-            }
-            Sne(x, y) => {
-                if self.v(x) != self.v(y) {
-                    // skip instruction
-                    self.pc += 2;
-                }
-            }
-            Set(x, k) => {
-                *self.v_mut(x) = k;
-            }
-            AddC(x, k) => {
-                let res = self.v(x) as u16 + k as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 != 0 { 1 } else { 0 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
-            }
-            Assign(x, y) => {
-                *self.v_mut(x) = self.v(y);
-            }
-            Or(x, y) => {
-                *self.v_mut(x) |= self.v(y);
-            }
-            And(x, y) => {
-                *self.v_mut(x) &= self.v(y);
-            }
-            Xor(x, y) => {
-                *self.v_mut(x) ^= self.v(y);
-            }
-            Shr(x, _) => {
-                *self.v_mut(0xF) = self.v(x) & 1;
-                *self.v_mut(x) >>= 1;
-            }
-            Shl(x, _) => {
-                *self.v_mut(0xF) = (self.v(x) & 0x80) >> 7;
-                *self.v_mut(x) = (self.v(x) & 0x7F << 1) as u8;
-            }
-            Add(x, y) => {
-                let res = self.v(x) as u16 + self.v(y) as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 != 0 { 1 } else { 0 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
-            }
-            Sub(x, y) => {
-                let res = 0xFF00 + self.v(x) as u16 - self.v(y) as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
-            }
-            Subn(x, y) => {
-                let res = 0xFF00 + self.v(y) as u16 - self.v(x) as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
-            }
-            SetPtr(a) => {
-                self.i = a as usize;
-            }
-            AddPtr(x) => {
-                self.i += self.v(x) as usize;
-            }
-            SpriteAddr(x) => {
-                self.i = (FS_CHARLEN * (self.v(x) & 0xF)) as usize;
-            }
-            Dump(x) => {
-                for idx in 0..=x {
-                    self.memory[self.i + idx as usize] = self.v(idx);
-                }
-            }
-            Load(x) => {
-                for idx in 0..=x {
-                    *self.v_mut(idx) = self.memory[self.i + idx as usize];
-                }
-            }
-            Rand(x, k) => {
-                // TODO use random gen
-                *self.v_mut(x) = rand::random::<u8>() & k;
-            }
-            Skip(x) => {
+
+            (0xE, _, 0x9, 0xE) => {
                 if self.pressed_keys.contains(&self.v(x)) {
                     self.pc += 2;
                 }
             }
-            Skipn(x) => {
+            (0xE, _, 0xA, 0x1) => {
                 if !self.pressed_keys.contains(&self.v(x)) {
                     self.pc += 2;
                 }
             }
-            GetKey(x) => {
+
+            (0xF, _, 0x0, 0x7) => {
+                *self.v_mut(x) = self.timer;
+            }
+            (0xF, _, 0x0, 0xA) => {
                 if self.pressed_keys.is_empty() {
                     self.pc -= 2;
                 } else {
                     *self.v_mut(x) = self.pressed_keys[0];
                 }
             }
-            GetDelay(x) => {
-                *self.v_mut(x) = self.timer;
-            }
-            SetDelay(x) => {
+            (0xF, _, 0x1, 0x5) => {
                 self.timer = self.v(x);
             }
-            SoundTimer(x) => {
+            (0xF, _, 0x1, 0x8) => {
                 self.sound_timer = self.v(x);
             }
-
-            SetBCD(x) => {
+            (0xF, _, 0x1, 0xE) => {
+                self.i += self.v(x) as usize;
+            }
+            (0xF, _, 0x2, 0x9) => {
+                self.i = (FS_CHARLEN * (self.v(x) & 0xF)) as usize;
+            }
+            (0xF, _, 0x3, 0x3) => {
                 let (a, b, c) = to_bcd(self.v(x));
                 self.memory[self.i] = a;
                 self.memory[self.i + 1] = b;
                 self.memory[self.i + 2] = c;
             }
-        };
+            (0xF, _, 0x5, 0x5) => {
+                for idx in 0..=x {
+                    self.memory[self.i + idx as usize] = self.v(idx);
+                }
+            }
+            (0xF, _, 0x6, 0x5) => {
+                for idx in 0..=x {
+                    *self.v_mut(idx) = self.memory[self.i + idx as usize];
+                }
+            }
+            _ => return Err(Chip8Error::UnknownOpcode(code)),
+        }
         Ok(None)
     }
 }

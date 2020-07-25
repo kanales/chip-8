@@ -29,16 +29,15 @@ impl Screen for Buffer {
         let x = x as usize;
         let y = y as usize;
         let n = n as usize;
-        for r in 0..n {
-            let cell = pixels[r];
-            for c in 0..8 {
-                let b = n_bit(cell, c as u8);
-
-                let r = (y + r) % HEIGHT;
-                let c = (x + c) % WIDTH;
-                let idx = r * WIDTH + c;
-                res |= buf[idx] & b != 0;
-                buf[idx] ^= b;
+        for row in 0..n {
+            let cell = pixels[row];
+            for col in 0..8 {
+                let value = n_bit(cell, col as u8);
+                let row = (y + row) % HEIGHT;
+                let col = (x + col) % WIDTH;
+                let idx = row * WIDTH + col;
+                res |= buf[idx] & value != 0;
+                buf[idx] ^= value;
             }
         }
         res
