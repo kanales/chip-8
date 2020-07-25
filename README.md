@@ -2,6 +2,10 @@
 
 Interpreter written for the CHIP-8 virtual machine.
 
+## Usage
+
+Run with `cargo run <filename>`, where filename is any CHIP-8 source file.
+
 ## TODO
 
 - [x] consider using a RNG instead of the [fair dice roll](https://xkcd.com/221/).

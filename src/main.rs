@@ -13,25 +13,10 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::WindowCanvas;
+use std::process::exit;
 use std::time::Duration;
 
 const SCALE: usize = 20;
-
-fn machine() -> Machine {
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 1 {
-        panic!("Expected filename");
-    }
-
-    let filename = &args[1];
-    let mut file = File::open(filename).unwrap();
-    let mut rom = Vec::new();
-
-    file.read_to_end(&mut rom).unwrap();
-
-    Machine::new(&rom)
-}
 
 fn clear(canvas: &mut WindowCanvas) {
     canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -83,6 +68,20 @@ fn kc_as_u8(kc: Keycode) -> Option<u8> {
 }
 
 pub fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("usage: {} chip8_source_file", args[0]);
+        exit(1);
+    }
+
+    let filename = &args[1];
+    let mut file = File::open(filename).unwrap();
+    let mut rom = Vec::new();
+
+    file.read_to_end(&mut rom).unwrap();
+
+    let mut machine = Machine::new(&rom);
+
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
@@ -97,7 +96,6 @@ pub fn main() {
     canvas.clear();
     canvas.present();
 
-    let mut machine = machine();
     let mut presses = Vec::new();
     let mut event_pump = sdl_context.event_pump().unwrap();
     'running: loop {
