@@ -60,6 +60,28 @@ fn draw(canvas: &mut WindowCanvas, buffer: &[u8]) {
     canvas.fill_rects(&whites).unwrap();
 }
 
+fn kc_as_u8(kc: Keycode) -> Option<u8> {
+    match kc {
+        Keycode::A => Some(0xA),
+        Keycode::B => Some(0xB),
+        Keycode::C => Some(0xC),
+        Keycode::D => Some(0xD),
+        Keycode::E => Some(0xE),
+        Keycode::F => Some(0xF),
+        Keycode::Num0 => Some(0x0),
+        Keycode::Num1 => Some(0x1),
+        Keycode::Num2 => Some(0x2),
+        Keycode::Num3 => Some(0x3),
+        Keycode::Num4 => Some(0x4),
+        Keycode::Num5 => Some(0x5),
+        Keycode::Num6 => Some(0x6),
+        Keycode::Num7 => Some(0x7),
+        Keycode::Num8 => Some(0x8),
+        Keycode::Num9 => Some(0x9),
+        _ => None,
+    }
+}
+
 pub fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -76,7 +98,7 @@ pub fn main() {
     canvas.present();
 
     let mut machine = machine();
-
+    let mut presses = Vec::new();
     let mut event_pump = sdl_context.event_pump().unwrap();
     'running: loop {
         for event in event_pump.poll_iter() {
@@ -86,10 +108,28 @@ pub fn main() {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(kc), ..
+                } => {
+                    if let Some(k) = kc_as_u8(kc) {
+                        if !presses.contains(&k) {
+                            presses.push(k);
+                        }
+                    }
+                }
+                Event::KeyUp {
+                    keycode: Some(kc), ..
+                } => {
+                    if let Some(k) = kc_as_u8(kc) {
+                        let index = presses.iter().position(|x| *x == k).unwrap();
+                        presses.remove(index);
+                    }
+                }
                 _ => {}
             }
         }
-
+        println!("input: {:?}", presses);
+        machine.key_pressed(&presses);
         match machine.step() {
             Ok(Some(b)) => {
                 clear(&mut canvas);

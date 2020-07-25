@@ -1,8 +1,7 @@
-use crate::lib::n_bit;
 use crate::lib::opcode::Opcode;
+use crate::lib::screen::Buffer;
 use crate::lib::screen::Screen;
-use crate::lib::screen::{Buffer, HEIGHT, WIDTH};
-use crate::lib::{Address, Chip8Error};
+use crate::lib::Chip8Error;
 
 use std::convert::TryInto;
 
@@ -33,6 +32,9 @@ pub struct Machine {
     i: usize,
     stack: Vec<usize>,
     pc: usize,
+    timer: u8,
+    sound_timer: u8,
+    pressed_keys: Vec<u8>,
 }
 
 fn to_bcd(num: u8) -> (u8, u8, u8) {
@@ -54,6 +56,9 @@ impl Machine {
             i: 0,
             stack: Vec::new(),
             pc: 0x200,
+            timer: 0,
+            sound_timer: 0,
+            pressed_keys: Vec::new(),
         };
         // load font set
         m.memory[..80].clone_from_slice(&FONTSET);
@@ -61,6 +66,11 @@ impl Machine {
         // load program to memory
         m.memory[0x200..0x200 + program.len()].clone_from_slice(program);
         m
+    }
+
+    pub fn key_pressed(&mut self, ks: &Vec<u8>) {
+        self.pressed_keys.clone_from(ks);
+        println!("pk: {:?}", self.pressed_keys);
     }
 
     pub fn step(&mut self) -> Result<Option<&[u8]>, Chip8Error> {
@@ -73,6 +83,11 @@ impl Machine {
         let code: Opcode = ((code0 << 8) + code1).try_into()?;
 
         self.pc += 2;
+        self.timer = if self.timer > 0 { self.timer - 1 } else { 0 };
+        self.sound_timer = if self.timer > 0 { self.timer - 1 } else { 0 };
+        if self.sound_timer > 0 {
+            //println!("BEEP");
+        }
         self.execute(code)
     }
 
@@ -207,14 +222,34 @@ impl Machine {
             }
             Rand(x, k) => {
                 // TODO use random gen
-                *self.v_mut(x) = 0x04 & k;
+                *self.v_mut(x) = rand::random::<u8>() & k;
             }
-            Skip(x) => unimplemented!(),
-            Skipn(x) => unimplemented!(),
-            GetKey(x) => unimplemented!(),
-            GetDelay(x) => unimplemented!(),
-            SetDelay(x) => unimplemented!(),
-            SoundTimer(x) => unimplemented!(),
+            Skip(x) => {
+                if self.pressed_keys.contains(&self.v(x)) {
+                    self.pc += 2;
+                }
+            }
+            Skipn(x) => {
+                if !self.pressed_keys.contains(&self.v(x)) {
+                    self.pc += 2;
+                }
+            }
+            GetKey(x) => {
+                if self.pressed_keys.is_empty() {
+                    self.pc -= 2;
+                } else {
+                    *self.v_mut(x) = self.pressed_keys[0];
+                }
+            }
+            GetDelay(x) => {
+                *self.v_mut(x) = self.timer;
+            }
+            SetDelay(x) => {
+                self.timer = self.v(x);
+            }
+            SoundTimer(x) => {
+                self.sound_timer = self.v(x);
+            }
 
             SetBCD(x) => {
                 let (a, b, c) = to_bcd(self.v(x));
