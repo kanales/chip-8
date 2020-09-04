@@ -1,6 +1,6 @@
 use crate::lib::screen::Buffer;
 use crate::lib::screen::Screen;
-use crate::lib::Chip8Error;
+use crate::lib::{Chip8Error, Chip8Result};
 
 const FS_CHARLEN: u8 = 5;
 const FONTSET: [u8; 80] = [
@@ -44,6 +44,22 @@ fn test_to_bcd() {
     assert_eq!(bcd, (1, 2, 7));
 }
 
+/// Expose the value in the nth register
+macro_rules! register {
+    [$s:tt # $x:expr] => {
+        $s.registers[$x as usize]
+    };
+
+    [$s:tt # $x:expr; $t:ty ] => {
+        $s.registers[$x as usize] as $t
+    };
+}
+
+pub enum Step<'a> {
+    DrawAction(&'a [u8]),
+    Step,
+}
+
 impl Machine {
     pub fn new(program: &[u8]) -> Self {
         let mut m = Machine {
@@ -65,11 +81,20 @@ impl Machine {
         m
     }
 
-    pub fn key_pressed(&mut self, ks: &[u8]) {
-        self.pressed_keys.clone_from_slice(ks);
+    pub fn key_pressed(&mut self, ks: Vec<u8>) {
+        self.pressed_keys = ks;
     }
 
-    pub fn step(&mut self) -> Result<Option<&[u8]>, Chip8Error> {
+    fn update_timer(&mut self) {
+        self.timer = if self.timer > 0 { self.timer - 1 } else { 0 };
+        self.sound_timer = if self.sound_timer > 0 {
+            self.sound_timer - 1
+        } else {
+            0
+        };
+    }
+
+    pub fn step(&mut self) -> Chip8Result<Step> {
         if self.pc >= 0x1000 {
             return Err(Chip8Error::EndOfMemory);
         };
@@ -77,28 +102,16 @@ impl Machine {
         let code0 = self.memory[self.pc];
         let code1 = self.memory[self.pc + 1];
 
+        self.update_timer();
+        // instructions are 2 cells wide
         self.pc += 2;
-        self.timer = if self.timer > 0 { self.timer - 1 } else { 0 };
-        self.sound_timer = if self.timer > 0 {
-            self.sound_timer - 1
-        } else {
-            0
-        };
         if self.sound_timer > 0 {
-            println!("BEEP");
+            //println!("BEEP");
         }
         self.execute(code0, code1)
     }
 
-    fn v_mut(&mut self, x: u8) -> &mut u8 {
-        &mut self.registers[x as usize]
-    }
-
-    fn v(&self, x: u8) -> u8 {
-        self.registers[x as usize]
-    }
-
-    fn execute(&mut self, most: u8, least: u8) -> Result<Option<&[u8]>, Chip8Error> {
+    fn execute(&mut self, most: u8, least: u8) -> Chip8Result<Step> {
         let a = (most & 0xF0) >> 4;
         let x = most & 0x0F;
 
@@ -113,7 +126,7 @@ impl Machine {
             // clear screen
             (0x0, 0x0, 0xE, 0x0) => {
                 self.buffer.clear();
-                return Ok(Some(self.buffer.get_buffer()));
+                return Ok(Step::DrawAction(self.buffer.get_buffer()));
             }
             // return
             (0x0, 0x0, 0xE, 0xE) => {
@@ -130,70 +143,70 @@ impl Machine {
                 self.pc = nnn as usize;
             }
             (0x3, _, _, _) => {
-                if self.v(x) == nn {
+                if register![self # x] == nn {
                     // skip instruction
                     self.pc += 2;
                 }
             }
             (0x4, _, _, _) => {
-                if self.v(x) != nn {
+                if register![self # x] != nn {
                     // skip instruction
                     self.pc += 2;
                 }
             }
             (0x5, _, _, 0x0) => {
-                if self.v(x) == self.v(y) {
+                if register![self # x] == register![self # y] {
                     // skip instruction
                     self.pc += 2;
                 }
             }
             (0x6, _, _, _) => {
-                *self.v_mut(x) = nn;
+                register![self # x] = nn;
             }
             (0x7, _, _, _) => {
-                let res = self.v(x) as u16 + nn as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 == 0 { 0 } else { 1 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
+                let res = register![self # x; u16] + nn as u16;
+                register![self # 0xF] = if res & 0xFF00 == 0 { 0 } else { 1 };
+                register![self # x] = (res & 0xFF) as u8;
             }
 
             (0x8, _, _, 0x0) => {
-                *self.v_mut(x) = self.v(y);
+                register![self # x] = register![self # y];
             }
             (0x8, _, _, 0x1) => {
-                *self.v_mut(x) |= self.v(y);
+                register![self # x] |= register![self # y];
             }
             (0x8, _, _, 0x2) => {
-                *self.v_mut(x) &= self.v(y);
+                register![self # x] &= register![self # y];
             }
             (0x8, _, _, 0x3) => {
-                *self.v_mut(x) ^= self.v(y);
+                register![self # x] ^= register![self # y];
             }
             (0x8, _, _, 0x4) => {
-                let res = self.v(x) as u16 + self.v(y) as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 != 0 { 1 } else { 0 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
+                let res = register![self # x; u16] + register![self # y; u16];
+                register![self # 0xF] = if res & 0xFF00 != 0 { 1 } else { 0 };
+                register![self # x] = (res & 0xFF) as u8;
             }
             (0x8, _, _, 0x5) => {
-                let res = 0xFF00 + self.v(x) as u16 - self.v(y) as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
+                let res = 0xFF00 + register![self # x; u16] - register![self # y; u16];
+                register![self # 0xF] = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
+                register![self # x] = (res & 0xFF) as u8;
             }
             (0x8, _, _, 0x6) => {
-                *self.v_mut(0xF) = self.v(x) & 1;
-                *self.v_mut(x) >>= 1;
+                register![self # 0xF] = register![self # x] & 1;
+                register![self # x] >>= 1;
             }
             (0x8, _, _, 0x7) => {
-                let res = 0xFF00 + self.v(y) as u16 - self.v(x) as u16;
-                *self.v_mut(0xF) = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
-                *self.v_mut(x) = (res & 0xFF) as u8;
+                let res = 0xFF00 + register![self # y; u16] - register![self # x; u16];
+                register![self # 0xF] = if res & 0xFF00 != 0xFF00 { 0 } else { 1 };
+                register![self # x] = (res & 0xFF) as u8;
             }
             (0x8, _, _, 0xE) => {
-                *self.v_mut(0xF) = (self.v(x) & 0x80) >> 7;
-                *self.v_mut(x) = (self.v(x) & 0x7F << 1) as u8;
+                register![self # 0xF] = (register![self # x] & 0x80) >> 7;
+                register![self # x] = (register![self # x] & 0x7F << 1) as u8;
             }
 
             (0x9, _, _, 0) => {
-                if self.v(x) != self.v(y) {
+                if register![self # x] != register![self # y] {
                     // skip instruction
                     self.pc += 2;
                 }
@@ -203,17 +216,19 @@ impl Machine {
                 self.i = nnn as usize;
             }
             (0xB, _, _, _) => {
-                self.pc = (nnn + self.v(0) as u16) as usize;
+                self.pc = (nnn + register![self # 0; u16]) as usize;
             }
             (0xC, _, _, _) => {
                 // TODO use random gen
-                *self.v_mut(x) = rand::random::<u8>() & nn;
+                register![self # x] = rand::random::<u8>() & nn;
             }
             // Draw sprite
             (0xD, _, _, _) => {
-                *self.v_mut(0xF) = if self.buffer.draw(
-                    self.v(x),
-                    self.v(y),
+                // TODO fix this
+                // maybe try to notify the screen (observer style)?
+                register![self # 0xF] = if self.buffer.draw(
+                    register![self # x],
+                    register![self # y],
                     &self.memory[self.i..self.i + (n as usize)],
                     n,
                 ) {
@@ -221,60 +236,60 @@ impl Machine {
                 } else {
                     0
                 };
-                return Ok(Some(self.buffer.get_buffer()));
+                return Ok(Step::DrawAction(self.buffer.get_buffer()));
             }
 
             (0xE, _, 0x9, 0xE) => {
-                if self.pressed_keys.contains(&self.v(x)) {
+                if self.pressed_keys.contains(&register![self # x]) {
                     self.pc += 2;
                 }
             }
             (0xE, _, 0xA, 0x1) => {
-                if !self.pressed_keys.contains(&self.v(x)) {
+                if !self.pressed_keys.contains(&register![self # x]) {
                     self.pc += 2;
                 }
             }
 
             (0xF, _, 0x0, 0x7) => {
-                *self.v_mut(x) = self.timer;
+                register![self # x] = self.timer;
             }
             (0xF, _, 0x0, 0xA) => {
                 if self.pressed_keys.is_empty() {
                     self.pc -= 2;
                 } else {
-                    *self.v_mut(x) = self.pressed_keys[0];
+                    register![self # x] = self.pressed_keys[0];
                 }
             }
             (0xF, _, 0x1, 0x5) => {
-                self.timer = self.v(x);
+                self.timer = register![self # x];
             }
             (0xF, _, 0x1, 0x8) => {
-                self.sound_timer = self.v(x);
+                self.sound_timer = register![self # x];
             }
             (0xF, _, 0x1, 0xE) => {
-                self.i += self.v(x) as usize;
+                self.i += register![self # x] as usize;
             }
             (0xF, _, 0x2, 0x9) => {
-                self.i = (FS_CHARLEN * (self.v(x) & 0xF)) as usize;
+                self.i = (FS_CHARLEN * (register![self # x] & 0xF)) as usize;
             }
             (0xF, _, 0x3, 0x3) => {
-                let (a, b, c) = to_bcd(self.v(x));
+                let (a, b, c) = to_bcd(register![self # x]);
                 self.memory[self.i] = a;
                 self.memory[self.i + 1] = b;
                 self.memory[self.i + 2] = c;
             }
             (0xF, _, 0x5, 0x5) => {
                 for idx in 0..=x {
-                    self.memory[self.i + idx as usize] = self.v(idx);
+                    self.memory[self.i + idx as usize] = register![self # idx];
                 }
             }
             (0xF, _, 0x6, 0x5) => {
                 for idx in 0..=x {
-                    *self.v_mut(idx) = self.memory[self.i + idx as usize];
+                    register![self # idx] = self.memory[self.i + idx as usize];
                 }
             }
             _ => return Err(Chip8Error::UnknownOpcode(code)),
         }
-        Ok(None)
+        Ok(Step::Step)
     }
 }

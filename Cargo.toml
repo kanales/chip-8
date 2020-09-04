@@ -10,5 +10,3 @@ edition = "2018"
 rand = "*"
 sdl2 = "*"
 
-[profile.release]
-opt-level = 3

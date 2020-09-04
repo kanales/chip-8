@@ -1,9 +1,5 @@
 pub mod machine;
-pub mod opcode;
 pub mod screen;
-
-pub type Address = u16;
-pub type Register = u8;
 
 #[derive(Debug)]
 pub enum Chip8Error {
@@ -11,6 +7,8 @@ pub enum Chip8Error {
     EndOfMemory,
     EmptyStack,
 }
+
+pub type Chip8Result<F> = Result<F, Chip8Error>;
 
 pub fn n_bit(src: u8, n: u8) -> u8 {
     assert!(n < 8);

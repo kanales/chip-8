@@ -1,12 +1,10 @@
 mod lib;
 
-use lib::machine::Machine;
+use lib::machine::{Machine, Step};
 use lib::screen::{HEIGHT, WIDTH};
 use std::env;
 use std::fs::File;
 use std::io::Read;
-
-extern crate sdl2;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -14,9 +12,11 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::WindowCanvas;
 use std::process::exit;
-use std::time::Duration;
+use std::time::Instant;
 
 const SCALE: usize = 20;
+const FPS: u128 = 60;
+const CLOCK: usize = 500;
 
 fn clear(canvas: &mut WindowCanvas) {
     canvas.set_draw_color(Color::RGB(0, 0, 0));
@@ -96,8 +96,12 @@ pub fn main() {
     canvas.clear();
     canvas.present();
 
+    const DELAY: u128 = 1_000_000 / FPS;
+    const OPS_PER_FRAME: usize = CLOCK / FPS as usize;
     let mut presses = Vec::new();
     let mut event_pump = sdl_context.event_pump().unwrap();
+    let mut prev = Instant::now();
+    let mut steps_made = 0;
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
@@ -126,19 +130,27 @@ pub fn main() {
                 _ => {}
             }
         }
-        machine.key_pressed(&presses);
-        match machine.step() {
-            Ok(Some(b)) => {
-                clear(&mut canvas);
-                draw(&mut canvas, b);
-                canvas.present();
-            }
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("{:?}", e);
-                break 'running;
+        machine.key_pressed(presses.clone());
+        if steps_made < OPS_PER_FRAME {
+            steps_made += 1;
+            match machine.step() {
+                Ok(Step::DrawAction(b)) => {
+                    clear(&mut canvas);
+                    draw(&mut canvas, b);
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("{:?}", e);
+                    break 'running;
+                }
             }
         }
-        std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+
+        let now = Instant::now();
+        if now.duration_since(prev).as_micros() >= DELAY {
+            canvas.present();
+            prev = now;
+            steps_made = 0;
+        }
     }
 }
